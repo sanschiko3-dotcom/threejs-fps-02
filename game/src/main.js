@@ -1,3 +1,4 @@
+import { createUtility, obscured } from './utility.js';
 // Boot and the one loop: a fixed 60 Hz simulation feeding a render at the
 // display's rate. Owns the match glue — player shooting, the grenade, planting,
 // the bomb on the ground, and every hook the bots and the rounds call. The
@@ -10,7 +11,7 @@ import { mulberry32 } from './rng.js';
 import { createWorld } from './map.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
-import { createWeaponSet, WEAPONS, GRENADE } from './weapons.js';
+import { createWeaponSet, WEAPONS, GRENADE, recoilFor } from './weapons.js';
 import { createBots } from './bots.js';
 import { createRounds, BUY_SECONDS, ROUND_SECONDS } from './rounds.js';
 import { createEffects } from './effects.js';
@@ -39,6 +40,9 @@ scene.add(camera);
 const world = createWorld(scene);
 const effects = createEffects(scene);
 const audio = createAudio();
+const utility = createUtility(scene);
+let blind=0;
+const inventory={smoke:0,flash:0};
 const hud = createHud();
 const player = createPlayer(world.colliders, world.spawns.atk[0]);
 const weapons = createWeaponSet(camera);
@@ -105,6 +109,7 @@ function aliveCounts() {
 const hooks = {
   world,
   random: () => random(),
+  playerBody: () => body,
   playerAlive: () => playerState.alive,
   playerPos: () => body.position,
   playerCrouching: () => body.crouching,
@@ -124,20 +129,26 @@ const hooks = {
       playerState.armor -= absorbed;
       amount -= absorbed;
     }
+    rounds.record(bot.name,'damage',Math.min(playerState.health,amount));
     playerState.health -= amount;
     hud.damageFlash();
+    hud.direction(body,bot.body?.position);
     audio.hurt();
     hud.setHealth(playerState.health, playerState.armor);
     if (playerState.health <= 0) {
       playerState.health = 0;
       playerState.alive = false;
+      rounds.record(bot.name,'kills');
       hud.feed(`${bot.name} killed you`, false);
       hud.banner('You are down', 'Your team fights on — next round you return.', 3000);
       input.releaseLock();
     }
   },
   damageBot(bot, dmg, part, shooter) {
+    const actor=shooter==='player'?'You':shooter.name;
+    rounds.record(actor,'damage',Math.min(bot.health,dmg));
     const killed = bots.damage(bot, dmg, part);
+    if(killed)rounds.record(actor,'kills');
     if (killed) {
       const name = shooter === 'player' ? 'You' : shooter.name;
       hud.feed(`${name} killed ${bot.name}${part === 'head' ? ' (headshot)' : ''}`, shooter === 'player');
@@ -153,7 +164,7 @@ const hooks = {
     }
     return killed;
   },
-  onPlant(bot) {
+  onBotPlant(bot) {
     const site = bot.plan === 'B' ? 'B' : 'A';
     if (rounds.plantBomb(site, false)) {
       bot.hasBomb = false;
@@ -161,6 +172,7 @@ const hooks = {
     }
   },
   onDefuse(bot) {
+    rounds.record(bot.name,'defuses');
     rounds.endRound('def', `Device defused by ${bot.name}`);
     rounds.state.bomb.phase = 'gone';
     hud.setBomb('', '');
@@ -183,14 +195,15 @@ const hooks = {
     hud.setBomb('', '');
     hud.setScore(score.atk, score.def, rounds.state.round);
     const won = winner === 'atk';
-    hud.banner(won ? 'Round won — Strikers' : 'Round lost — Wardens', reason, 3600);
+    hud.banner(won ? 'Round won — Strikers' : 'Round lost — Wardens', reason+' · MVP: '+rounds.state.mvp, 3600);
     if (won) audio.roundWin();
     else audio.roundLose();
   },
   onMatchEnd(result, score) {
-    hud.banner(result, `Final score ${score.atk} — ${score.def}. Refresh to play again.`, 8000);
+    hud.banner(result, `Final score ${score.atk} — ${score.def}. ${rounds.statsLine()} · Refresh to play again.`, 8000);
   },
   onPlant(site, byPlayer) {
+    rounds.record(byPlayer?'You':bots.carrier()?.name||'Strikers','plants');
     audio.plant();
     hud.feed(byPlayer ? `You planted the device at ${site}` : `Device planted at site ${site}`, byPlayer);
   },
@@ -216,6 +229,7 @@ const hooks = {
     rounds.pickupBomb(false);
   },
   onBuy(item, price) {
+    if (item === 'smoke' || item === 'flash') { inventory[item]++; hud.setMoney(rounds.state.money); return; }
     if (item === 'grenade') {
       weapons.state.grenades += 1;
     } else if (item === 'armor') {
@@ -231,6 +245,12 @@ const hooks = {
 };
 
 const bots = createBots(scene, world, hooks);
+function utilityActors(){return [{position:body.position,yaw:body.yaw,flash:t=>{blind=Math.max(blind,t);}},...bots.bots.filter(b=>b.alive).map(b=>({position:b.body.position,yaw:b.body.yaw,flash:t=>b.blind=t}))];}
+hooks.gunshot=b=>audio.positional('shot',b.body.position,body);
+hooks.onPlantBot=hooks.onBotPlant;
+hooks.utility=(kind,at)=>utility.throw(kind,at,utilityActors());
+hooks.footstep=(b)=>{audio.positional('step',b.body.position,body);bots.hearShot(b.body.position,b.team,10);};
+
 const rounds = createRounds(hooks);
 
 function resetPositions(plan) {
@@ -255,6 +275,7 @@ function resetPositions(plan) {
 }
 
 function shoot(spread) {
+  if (input.state.aiming) spread *= 0.5;
   if (!weapons.takeRound()) {
     audio.dry();
     return false;
@@ -267,7 +288,8 @@ function shoot(spread) {
   scene.updateMatrixWorld(true);
   raycaster.set(camera.position, direction);
   const targets = world.shootables.concat(bots.hitMeshes());
-  const hit = raycaster.intersectObjects(targets, false)[0];
+  let hit = raycaster.intersectObjects(targets, false)[0];
+  if(hit && obscured(camera.position,hit.point)) hit=null;
   muzzle.copy(camera.position).addScaledVector(direction, 0.6);
   if (hit) {
     effects.tracer(muzzle, hit.point);
@@ -275,7 +297,7 @@ function shoot(spread) {
     if (bot && bot.alive) {
       const def = weapons.def();
       const part = hit.object.userData.part;
-      const dmg = def.damage * (part === 'head' ? def.headMult : 1);
+      const dmg = def.damage * (part === 'head' ? def.headMult : part === 'limb' ? 0.6 : 1);
       const killed = hooks.damageBot(bot, dmg, part, 'player');
       hud.hitMarker(killed);
       if (!killed) audio.hit();
@@ -289,7 +311,8 @@ function shoot(spread) {
   }
   weapons.pullTrigger();
   audio.shot(weapons.state.key);
-  player.recoil(0.009 + random() * 0.004, (random() * 2 - 1) * 0.004);
+  const shotIndex = weapons.def().mag - weapons.state.mag;
+  player.recoil(...recoilFor(weapons.state.key,shotIndex-1));
   bots.hearShot(body.position, 'atk');
   hud.setAmmo(weapons.state.mag, weapons.state.reserve, weapons.state.grenades);
   return true;
@@ -400,6 +423,10 @@ function stepBombPickup() {
 }
 
 function step(dt) {
+ utility.step(dt); blind=Math.max(0,blind-dt); hud.tactical(body,bots.bots,rounds.state.bomb,blind);
+ audio.deafen(blind);
+ for(const [key,kind] of [['KeyX','smoke'],['KeyZ','flash']]) if(input.state.keys.has(key)&&inventory[kind]>0&&rounds.state.phase==='live'){ inventory[kind]--; camera.getWorldDirection(direction); const at=body.position.clone().addScaledVector(direction,9); utility.throw(kind,at,utilityActors()); input.state.keys.delete(key); }
+
   elapsed += dt;
   const keys = input.state.keys;
   const phase = rounds.state.phase;
@@ -407,7 +434,8 @@ function step(dt) {
   if (phase !== 'end') {
     // Freeze time: nobody moves during the buy phase.
     if (phase !== 'buy') {
-      player.step(dt, keys);
+      if(playerState.alive)player.step(dt, keys);
+      if(player.groundSpeed()>2 && elapsed>(body.nextStep||0)){audio.positional('step',body.position,body);bots.hearShot(body.position,'atk',12);body.nextStep=elapsed+.42;}
       bots.step(dt, elapsed, random);
     }
     weapons.step(dt);
@@ -431,6 +459,9 @@ function step(dt) {
     rounds.state.bomb.phase === 'planted',
   );
   hud.setAlive(aliveCounts().atk, aliveCounts().def);
+  body.aiming = input.state.aiming;
+  camera.fov = input.state.aiming ? 55 : 75;
+  camera.updateProjectionMatrix();
   hud.setCrosshair(weapons.spread(player.groundSpeed()) + (weapons.state.cooldown > 0 ? 0.006 : 0));
 }
 
@@ -454,6 +485,8 @@ function frame(now) {
       if (keys.has('Digit4')) tryBuy('sniper');
       if (keys.has('Digit5')) tryBuy('grenade');
       if (keys.has('Digit6')) tryBuy('armor');
+      if(keys.has('KeyX')){keys.delete('KeyX');rounds.buy('smoke');}
+      if(keys.has('KeyZ')){keys.delete('KeyZ');rounds.buy('flash');}
     }
     accumulator += dt;
     let steps = 0;

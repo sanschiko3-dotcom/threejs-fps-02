@@ -1,3 +1,5 @@
+import { intersectBody, WEAPONS } from './weapons.js';
+import { obscured } from './utility.js';
 // Bots: the other nine players. Each bot is a small state machine — route, hold,
 // push, plant, defuse, investigate — driven by a plan drawn per round (A push,
 // B push, split, mid hold) and by what it can see and hear. Perception is a
@@ -25,10 +27,10 @@ const _v3 = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
 
 function hasLineOfSight(shootables, from, to) {
-  _v1.copy(to).sub(from);
-  const dist = _v1.length();
+  const delta = new THREE.Vector3().subVectors(to,from);
+  const dist = delta.length();
   if (dist < 0.01) return true;
-  _ray.set(from, _v1.normalize());
+  _ray.set(from, delta.normalize());
   _ray.far = dist;
   const hit = _ray.intersectObjects(shootables, false)[0];
   return !hit;
@@ -45,7 +47,7 @@ function buildBotMesh(team, name) {
   body.userData.part = 'body';
   const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.3), dark);
   legs.position.y = 0.25;
-  legs.userData.part = 'body';
+  legs.userData.part = 'limb';
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10),
     new THREE.MeshStandardMaterial({ color: 0xc9a586, roughness: 0.7 }));
   head.position.y = 1.62;
@@ -57,7 +59,7 @@ function buildBotMesh(team, name) {
   gun.position.set(0.28, 1.15, -0.3);
   group.add(body, legs, head, visor, gun);
   group.traverse((child) => { child.castShadow = true; });
-  return { group, bodyMesh: body, headMesh: head, muzzle: gun };
+  return { group, limbMesh: legs, bodyMesh: body, headMesh: head, muzzle: gun };
 }
 
 export function createBots(scene, world, hooks) {
@@ -90,6 +92,7 @@ export function createBots(scene, world, hooks) {
         height: 1.72,
       },
       mesh: parts.group,
+      limbMesh: parts.limbMesh,
       bodyMesh: parts.bodyMesh,
       headMesh: parts.headMesh,
       muzzle: parts.muzzle,
@@ -118,6 +121,7 @@ export function createBots(scene, world, hooks) {
     };
     parts.bodyMesh.userData.bot = bot;
     parts.headMesh.userData.bot = bot;
+    parts.limbMesh.userData.bot = bot;
     bots.push(bot);
     return bot;
   }
@@ -129,10 +133,14 @@ export function createBots(scene, world, hooks) {
     const defNames = shuffle(random, [...NAMES_DEF]);
     for (let i = 0; i < 4; i += 1) {
       const bot = spawnBot('atk', atkNames[i], world.spawns.atk[i + 1], i === 0 ? 'smg' : 'rifle');
+      bot.utility = roundPlan.name === 'save' ? null : i%2 ? 'flash' : 'smoke';
+      bot.role=['entry','support','lurker','IGL'][i];
       bot.plan = roundPlan.atk[i % roundPlan.atk.length];
     }
     for (let i = 0; i < 5; i += 1) {
       const bot = spawnBot('def', defNames[i], world.spawns.def[i], i === 0 ? 'sniper' : 'rifle');
+      bot.utility = roundPlan.name === 'save' ? null : i%2 ? 'flash' : 'smoke';
+      bot.role=['AWPer','support','entry','lurker','IGL'][i];
       bot.plan = roundPlan.def[i % roundPlan.def.length];
     }
     // The bomb rides with the first attacker whose plan is a site push.
@@ -178,7 +186,7 @@ export function createBots(scene, world, hooks) {
         flat.normalize();
         if (flat.dot(facing) < 0.25 && cand.dist > 6) continue;
       }
-      if (!hasLineOfSight(shootables, eye, cand.pos)) continue;
+      if (obscured(eye,cand.pos) || !hasLineOfSight(shootables, eye, cand.pos)) continue;
       const score = cand.dist + (cand.kind === 'player' && hooks.playerCrouching() ? 6 : 0);
       if (score < bestScore) {
         bestScore = score;
@@ -197,7 +205,7 @@ export function createBots(scene, world, hooks) {
 
   function think(bot, time, random) {
     if (!bot.alive) return;
-    const seen = perceive(bot, time);
+    const seen = bot.blind>0 ? null : perceive(bot, time);
     if (seen) {
       if (bot.target && bot.target.kind === seen.kind && bot.target.ref === seen.ref) {
         bot.targetVisible += THINK_EVERY;
@@ -221,6 +229,9 @@ export function createBots(scene, world, hooks) {
     }
 
     const bomb = hooks.bomb();
+    if(bot.utility && ((bot.team==='atk' && bot.body.position.distanceTo(new THREE.Vector3(world.sites[bot.plan==='B'?'B':'A'].x,0,world.sites[bot.plan==='B'?'B':'A'].z))<14) || (bot.team==='def'&&bomb.phase==='planted'))){hooks.utility?.(bot.utility,new THREE.Vector3(bomb.phase==='planted'?bomb.x:world.sites[bot.plan==='B'?'B':'A'].x,1,bomb.phase==='planted'?bomb.z:world.sites[bot.plan==='B'?'B':'A'].z));bot.utility=null;bot.regroupUntil=time+2;}
+    if(bot.regroupUntil>time){bot.target=null;bot.state='hold';return;}
+
     // Dropped device: a free attacker fetches it; the last living attacker
     // fetches it even mid-fight, because planting is the win condition.
     const atkAlive = bots.filter((b) => b.alive && b.team === 'atk').length;
@@ -254,7 +265,9 @@ export function createBots(scene, world, hooks) {
     }
     if (bot.team === 'def' && bomb.phase === 'planted') {
       const d = Math.hypot(bot.body.position.x - bomb.x, bot.body.position.z - bomb.z);
-      if (d < 2.2 && !bot.target) {
+      if(!bot.retakeAt){bot.retakeAt=time;setRoute(bot,nearestWaypoint(world.waypoints,world.spawns.def[0].x,world.spawns.def[0].z));}
+      if(time-bot.retakeAt<3){bot.target=null;return;}
+      if (d < 2.2 && !bot.target && !bots.some(b=>b!==bot&&b.alive&&b.state==='defuse')) {
         bot.state = 'defuse';
         return;
       }
@@ -288,6 +301,8 @@ export function createBots(scene, world, hooks) {
 
   function stepBot(bot, dt, time, random) {
     if (!bot.alive) return;
+    bot.blind=Math.max(0,(bot.blind||0)-dt);
+    if(Math.hypot(bot.body.velocity.x,bot.body.velocity.z)>2 && time>(bot.nextStep||0)){hooks.footstep?.(bot);bot.nextStep=time+0.45;}
     bot.thinkAt -= dt;
     if (bot.thinkAt <= 0) {
       bot.thinkAt = THINK_EVERY + random() * 0.05;
@@ -305,7 +320,7 @@ export function createBots(scene, world, hooks) {
       bot.body.crouching = true;
       if (bot.state === 'plant') {
         bot.plantProgress += dt;
-        if (bot.plantProgress >= 3.5) hooks.onPlant(bot);
+        if (bot.plantProgress >= 3.5) hooks.onPlantBot(bot);
       } else {
         bot.defuseProgress += dt;
         if (bot.defuseProgress >= 5) hooks.onDefuse(bot);
@@ -410,21 +425,29 @@ export function createBots(scene, world, hooks) {
     // Muzzle flash + tracer from the bot's gun to the aim point.
     hooks.tracer(from, to, bot.team === 'atk' ? PALETTE.amber : PALETTE.teal);
     hooks.sound('enemyShot', dist);
-    if (Math.random() < hitChance) {
-      const head = Math.random() < 0.14;
-      const dmg = (bot.weaponKey === 'sniper' ? 62 : 24) * (head ? 2 : 1);
-      if (bot.target.kind === 'player') hooks.damagePlayer(dmg, head, bot);
-      else hooks.damageBot(bot.target.ref, dmg, head ? 'head' : 'body', bot);
+    const aim = to.clone().sub(from).normalize();
+    aim.x += (Math.random()-.5)*bot.aimError;
+    aim.y += (Math.random()-.5)*bot.aimError;
+    const ray = new THREE.Ray(from,aim.normalize());
+    const targetBody=bot.target.kind==='player'?hooks.playerBody():bot.target.ref.body;
+    const hit=intersectBody(ray,targetBody);
+    if(hit && !obscured(from,to) && hasLineOfSight(shootables,from,to)) {
+      const dmg=WEAPONS[bot.weaponKey].damage*hit.multiplier;
+      if(bot.target.kind==='player') hooks.damagePlayer(dmg,hit.part==='head',bot);
+      else hooks.damageBot(bot.target.ref,dmg,hit.part,bot);
     }
+    hooks.gunshot?.(bot);
+    hearShot(bot.body.position,bot.team);
+
   }
 
   // A bot hears a shot: the nearest two bots on each side drift toward it.
-  function hearShot(pos, shooterTeam) {
+  function hearShot(pos, shooterTeam, range=HEAR_RANGE) {
     let heard = 0;
     for (const bot of bots) {
       if (!bot.alive || bot.team === shooterTeam || bot.target) continue;
       const d = Math.hypot(bot.body.position.x - pos.x, bot.body.position.z - pos.z);
-      if (d < HEAR_RANGE && heard < 2) {
+      if (d < range && heard < 2) {
         bot.hearPos = { x: pos.x, z: pos.z };
         heard += 1;
       }
@@ -464,7 +487,7 @@ export function createBots(scene, world, hooks) {
     const out = [];
     for (const bot of bots) {
       if (!bot.alive) continue;
-      out.push(bot.bodyMesh, bot.headMesh);
+      out.push(bot.bodyMesh, bot.headMesh, bot.limbMesh);
     }
     return out;
   }

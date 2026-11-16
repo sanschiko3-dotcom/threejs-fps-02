@@ -152,6 +152,8 @@ export function createHud() {
       ['4', 'sniper', WEAPONS.sniper],
       ['5', 'grenade', GRENADE],
       ['6', 'armor', ARMOR],
+      ['X', 'smoke', {name:'Smoke grenade',price:300}],
+      ['Z', 'flash', {name:'Flashbang',price:200}],
     ];
     for (const [key, id, def] of items) {
       const button = document.createElement('button');
@@ -180,7 +182,13 @@ export function createHud() {
 
   return {
     setHealth, setAmmo, setTimer, setScore, setMoney, setAlive, setBomb,
+    tactical: drawTactical, direction: damageDirection,
     setCrosshair, hitMarker, damageFlash, feed, banner, showOverlay, hideOverlay,
     showBuy, onBuy, onPlay,
   };
 }
+
+const radar=document.createElement('canvas'); radar.width=180;radar.height=180;radar.style='position:fixed;top:95px;left:20px;pointer-events:none';document.body.append(radar);
+const veil=document.createElement('div');veil.style='position:fixed;inset:0;background:white;pointer-events:none;opacity:0';document.body.append(veil);
+function drawTactical(body,bots,bomb,blind){veil.style.opacity=Math.min(1,blind);const c=radar.getContext('2d');c.clearRect(0,0,180,180);c.fillStyle='#101c24aa';c.fillRect(0,0,180,180);for(const a of [{body,alive:true,team:'atk'},...bots]){if(!a.alive)continue;const x=90+a.body.position.x*2,z=90+a.body.position.z*2;c.fillStyle=a.team==='atk'?'#ffc35a':'#65ddd1';c.beginPath();c.moveTo(x,z);c.arc(x,z,16,-a.body.yaw-Math.PI/2-.4,-a.body.yaw-Math.PI/2+.4);c.closePath();c.fill();c.beginPath();c.arc(x,z,3,0,7);c.fill();}if(bomb.phase==='planted'||bomb.phase==='dropped'){c.fillStyle='red';c.fillRect(87+bomb.x*2,87+bomb.z*2,6,6);}}
+function damageDirection(body,source){if(!source)return;radar.style.outline='3px solid #ff5733';radar.title='Damage bearing '+Math.round(Math.atan2(source.x-body.position.x,source.z-body.position.z)*180/Math.PI);setTimeout(()=>radar.style.outline='',500);}

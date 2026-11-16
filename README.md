@@ -1,3 +1,7 @@
+[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![rank](https://make.fun/badge/threejs-fps-02/sanschiko3-dotcom/threejs-fps-02/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![reward](https://make.fun/badge/threejs-fps-02/sanschiko3-dotcom/threejs-fps-02/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+
 # SOLSTICE YARD — 5v5 tactical FPS in three.js
 
 A round-based tactical shooter in the style Counter-Strike made famous, set at a
@@ -11,21 +15,28 @@ eliminate the Wardens. The Wardens defend: hold the sites, defuse a planted
 device, or run the clock out. First to 8 rounds takes the match.
 
 - **Gunplay** — four weapons (P9 sidearm, Hornet SMG, VK-47 rifle, Longbow
-  DMR) plus HE grenades. Hitscan against bodies with 4× headshot damage,
-  recoil and spread that punish firing on the move, acceleration-based
-  movement with crouching and AABB collision, so stopping to aim pays.
+  DMR) plus HE grenades, smoke grenades ($300) and flashbangs ($200).
+  Geometric head/torso/limb hitboxes (4× / 1× / 0.6×), right-click ADS
+  (FOV zoom, spread halved, slower move), per-weapon recoil patterns, and
+  acceleration-based movement with crouching and AABB collision, so stopping
+  to aim pays.
 - **Tactics** — a plant/defuse objective, a buy menu between rounds with a
   Counter-Strike-shaped economy ($800 start, $300 per kill, $3250 round win,
-  $1900 loss plus a loss-streak bonus), and nine bots that follow per-round
-  plans (A push, B push, split, mid hold), hold angles, react to gunfire they
-  hear, plant when a site is clear and defuse when the device is down.
+  $1900 loss plus a loss-streak bonus), and nine bots with roles (entry,
+  support, lurker, AWPer, IGL) that follow economy-picked team plans (A
+  execute, B execute, split, mid hold, save), throw smoke/flash on executes,
+  retake together after a plant (utility first, defuser covered), and react
+  to gunfire and footsteps they hear. Bots hold angles, plant when a site is
+  clear and defuse when the device is down.
 - **The map** — an original solar station: inverter hall, tilted panel rows,
   a control building splitting mid into two doorways, containers and crates
   for cover, and a low amber sun over an indigo dusk sky.
 - **Presentation** — procedural WebAudio gunfire, beeps and explosions (no
   audio files), tracers, muzzle flash, hit sparks, a bomb explosion, and a
   HUD with health, armour, ammunition, round timer, score, money, alive
-  counts, killfeed and bomb status.
+  counts, killfeed and bomb status, plus a live minimap (dots, bomb/plant
+  marker, view cones), a damage-direction indicator, and round MVP with
+  end-of-match stats (kills, damage, plants, defuses).
 
 ## Controls
 

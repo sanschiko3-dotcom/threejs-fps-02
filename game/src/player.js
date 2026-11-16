@@ -115,7 +115,7 @@ export function createPlayer(colliders, spawn) {
       wish.set(-sin * forward + cos * strafe, 0, -cos * forward - sin * strafe).normalize();
     }
 
-    const speed = body.crouching ? CROUCH_SPEED : WALK_SPEED;
+    const speed = (body.crouching ? CROUCH_SPEED : WALK_SPEED) * (body.aiming ? 0.6 : 1);
     const blend = Math.min(1, (body.onGround ? GROUND_ACCEL : AIR_ACCEL) * dt / speed);
     body.velocity.x += (wish.x * speed - body.velocity.x) * blend;
     body.velocity.z += (wish.z * speed - body.velocity.z) * blend;

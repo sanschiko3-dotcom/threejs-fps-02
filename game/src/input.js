@@ -6,6 +6,7 @@ export function createInput(canvas, onLockChange) {
   let lookX = 0;
   let lookY = 0;
   let firing = false;
+  let aiming = false;
   let locked = false;
 
   function onKeyDown(event) {
@@ -24,16 +25,19 @@ export function createInput(canvas, onLockChange) {
   function onMouseDown(event) {
     if (!locked) return;
     if (event.button === 0) firing = true;
+    if (event.button === 2) aiming = true;
   }
   function onMouseUp(event) {
     if (event.button === 0) firing = false;
+    if (event.button === 2) aiming = false;
   }
   function onLock() {
     locked = document.pointerLockElement === canvas;
-    if (!locked) firing = false;
+    if (!locked) { firing = false; aiming = false; }
     if (onLockChange) onLockChange(locked);
   }
 
+  canvas.addEventListener('contextmenu', event => event.preventDefault());
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   document.addEventListener('mousemove', onMouseMove);
@@ -42,7 +46,7 @@ export function createInput(canvas, onLockChange) {
   document.addEventListener('pointerlockchange', onLock);
 
   return {
-    state: { keys, get firing() { return firing; } },
+    state: { keys, get aiming() { return aiming; }, get firing() { return firing; } },
     takeLook() {
       const out = { x: lookX, y: lookY };
       lookX = 0;

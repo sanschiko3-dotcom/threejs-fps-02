@@ -119,5 +119,6 @@ export function createEffects(scene) {
     }
   }
 
+  const dust=new THREE.BufferGeometry();const coords=new Float32Array(360);for(let i=0;i<360;i++)coords[i]=(Math.random()-.5)*(i%3===1?12:65);dust.setAttribute('position',new THREE.BufferAttribute(coords,3));const motes=new THREE.Points(dust,new THREE.PointsMaterial({color:0xffcc88,size:0.035,transparent:true,opacity:0.5}));motes.position.y=5;scene.add(motes);
   return { tracer, burst, explode, step };
 }

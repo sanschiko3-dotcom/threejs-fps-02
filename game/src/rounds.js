@@ -28,6 +28,7 @@ const PLANS = [
 
 export function createRounds(hooks) {
   const state = {
+    stats: {}, roundStats: {}, mvp: '',
     phase: 'buy',
     round: 1,
     score: { atk: 0, def: 0 },
@@ -52,11 +53,13 @@ export function createRounds(hooks) {
   };
 
   function drawPlan(random) {
-    state.plan = pick(random, PLANS);
+    state.plan = state.money < 1500 ? {name:'save',atk:['mid'],def:['mid']} : {...pick(random, PLANS)};
+    state.plan.name ||= ['A execute','B execute','split','mid hold'][PLANS.findIndex(p=>p.atk===state.plan.atk)];
     return state.plan;
   }
 
   function startRound(random) {
+    state.roundStats={};
     state.phase = 'buy';
     state.timeLeft = BUY_SECONDS;
     state.endReason = '';
@@ -85,6 +88,8 @@ export function createRounds(hooks) {
       state.money += LOSS_REWARD + Math.min(2, state.lossStreak) * LOSS_STREAK_BONUS;
       state.lossStreak += 1;
     }
+    state.mvp=Object.entries(state.roundStats).sort((a,b)=>b[1].points-a[1].points)[0]?.[0]||'Team effort';
+    record(state.mvp,'mvps');
     hooks.onRoundEnd(winner, reason, state.score);
     if (state.score.atk >= WIN_ROUNDS || state.score.def >= WIN_ROUNDS) {
       state.matchOver = true;
@@ -124,7 +129,7 @@ export function createRounds(hooks) {
   }
 
   function buy(item) {
-    const price = item === 'armor' ? ARMOR.price
+    const price = item === 'smoke' ? 300 : item === 'flash' ? 200 : item === 'armor' ? ARMOR.price
       : item === 'grenade' ? GRENADE.price
       : WEAPONS[item] ? WEAPONS[item].price : 0;
     if (price === 0 && item !== 'pistol') return false;
@@ -168,7 +173,16 @@ export function createRounds(hooks) {
     }
   }
 
+  function record(name,key,amount=1){
+    for(const table of [state.stats,state.roundStats]){
+      table[name] ||= {kills:0,damage:0,plants:0,defuses:0,mvps:0,points:0};
+      table[name][key]+=amount;
+      table[name].points+=amount*({kills:100,damage:1,plants:150,defuses:200,mvps:0}[key]||0);
+    }
+  }
   return {
+    record,
+    statsLine(){return Object.entries(state.stats).map(([name,s])=>`${name}: ${s.kills} K / ${Math.round(s.damage)} DMG / ${s.plants} P / ${s.defuses} D / ${s.mvps} MVP`).join(' · ');},
     state,
     startRound,
     endRound,

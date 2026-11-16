@@ -185,3 +185,35 @@ export function createWeaponSet(camera) {
     },
   };
 }
+
+// World-space anatomical boxes shared by both kinds of combatant.
+export function intersectBody(ray, body) {
+  const height = body.crouching ? 1.12 : 1.72;
+  const zones = [
+    ['head', -0.21, 0.21, 0.84, 1, 0.21],
+    ['torso', -0.29, 0.29, 0.4, 0.84, 0.2],
+    ['limb', -0.28, 0.28, 0, 0.4, 0.18],
+    ['limb', -0.44, -0.29, 0.42, 0.8, 0.18],
+    ['limb', 0.29, 0.44, 0.42, 0.8, 0.18],
+  ];
+  const inverse = new THREE.Matrix4().makeRotationY(-body.yaw);
+  const local = ray.clone();
+  local.origin.sub(body.position).applyMatrix4(inverse);
+  local.direction.transformDirection(inverse);
+  let nearest = null;
+  for (const [part, left, right, bottom, top, depth] of zones) {
+    const box = new THREE.Box3(new THREE.Vector3(left,bottom*height,-depth),new THREE.Vector3(right,top*height,depth));
+    const point = local.intersectBox(box,new THREE.Vector3());
+    if (!point) continue;
+    const distance = point.distanceTo(local.origin);
+    if (!nearest || distance < nearest.distance) nearest = {part,distance,multiplier:part==='head'?4:part==='limb'?0.6:1};
+  }
+  return nearest;
+}
+export const RECOIL_PATTERNS = {
+ pistol: [[.012,0],[.014,.002],[.016,-.002]],
+ smg: [[.008,.003],[.009,.006],[.009,.01],[.01,.012],[.01,.006],[.011,-.004]],
+ rifle: [[.012,0],[.014,0],[.017,.001],[.02,.002],[.023,-.002],[.025,-.003]],
+ sniper: [[.038,.001]],
+};
+export function recoilFor(key,index) {const pattern=RECOIL_PATTERNS[key];return pattern[Math.min(index,pattern.length-1)];}

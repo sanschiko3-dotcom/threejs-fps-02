@@ -5,6 +5,7 @@ export function createAudio() {
   let ctx = null;
   let master = null;
   let muted = false;
+  let pan=0;
 
   function ensure() {
     if (ctx) {
@@ -41,7 +42,8 @@ export function createAudio() {
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, t0);
     g.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
-    source.connect(filter).connect(g).connect(master);
+    const stereo=ctx.createStereoPanner();stereo.pan.value=pan;
+    source.connect(filter).connect(g).connect(stereo).connect(master);
     source.start(t0);
     source.stop(t0 + duration + 0.05);
   }
@@ -62,6 +64,8 @@ export function createAudio() {
   }
 
   return {
+    deafen(t){if(master)master.gain.value=t>0?0.04:0.35;},
+    positional(kind,pos,listener){if(!ensure())return;const dx=pos.x-listener.position.x,dz=pos.z-listener.position.z;const d=Math.hypot(dx,dz);pan=Math.max(-1,Math.min(1,(dx*Math.cos(listener.yaw)-dz*Math.sin(listener.yaw))/Math.max(1,d)));burst({duration:kind==='step'?0.07:0.14,freq:kind==='step'?250:900,gain:0.5/(1+d*0.15)});},
     unlock() { ensure(); },
     shot(kind) {
       if (kind === 'sniper') burst({ duration: 0.28, freq: 900, slideTo: 120, gain: 0.7 });

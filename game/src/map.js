@@ -164,7 +164,23 @@ export function createWorld(scene) {
   sun.shadow.camera.top = 40;
   sun.shadow.camera.bottom = -40;
   sun.shadow.camera.far = 120;
+  sun.shadow.bias = -0.0003;
+  sun.shadow.normalBias = 0.025;
   scene.add(sun);
+  // Thin emissive strips sit above each site without changing collision geometry.
+  for (const site of Object.values(SITES)) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(site.r, 0.025, 6, 48),
+      new THREE.MeshStandardMaterial({color:0xffbf65,emissive:0xff9d32,emissiveIntensity:2})
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(site.x,0.035,site.z);
+    scene.add(ring);
+    const beacon = new THREE.PointLight(0xffae52,8,9);
+    beacon.position.set(site.x,2.5,site.z);
+    scene.add(beacon);
+  }
+
   scene.add(new THREE.HemisphereLight(0x9a8fd8, 0x3a3026, 1.05));
 
   // Sun disc low on the western horizon, so the sky reads at a glance.
