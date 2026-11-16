@@ -18,6 +18,23 @@ import { buildDossier } from './vendor/makefun-threejs.ts';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
+// Fail before packaging if a required gameplay module is missing. This keeps
+// the delivered static bundle consistent with the v3 entry point.
+const gameplayModules = [
+  'main.js',
+  'rounds.js',
+  'economy.js',
+  'map.js',
+  'map_night.js',
+  'bots.js',
+  'weapons.js',
+  'hud.js',
+];
+for (const moduleName of gameplayModules) {
+  if (!existsSync(join(here, 'game', 'src', moduleName))) {
+    throw new Error(`Missing v3 gameplay module: ${moduleName}`);
+  }
+}
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });

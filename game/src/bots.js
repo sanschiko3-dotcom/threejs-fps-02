@@ -1,4 +1,5 @@
-import { intersectBody, WEAPONS } from './weapons.js';
+import { economy, DIFFICULTY } from './economy.js';
+import { intersectBody, WEAPONS, armoredDamage, BLOOM, recoilFor } from './weapons.js';
 import { obscured } from './utility.js';
 // Bots: the other nine players. Each bot is a small state machine — route, hold,
 // push, plant, defuse, investigate — driven by a plan drawn per round (A push,
@@ -127,7 +128,13 @@ export function createBots(scene, world, hooks) {
   }
 
   function reset(roundPlan, random) {
-    for (const bot of bots) scene.remove(bot.mesh);
+    for (const bot of bots) {
+      const a=economy.account(bot.name,bot.team);
+      Object.assign(a,{alive:bot.alive,armor:bot.armor,helmet:bot.helmet,kit:bot.kit});
+      scene.remove(bot.mesh);
+    }
+    for(const name of NAMES_ATK)economy.account(name,'atk');
+    for(const name of NAMES_DEF)economy.account(name,'def');
     bots.length = 0;
     const atkNames = shuffle(random, [...NAMES_ATK]);
     const defNames = shuffle(random, [...NAMES_DEF]);
@@ -143,6 +150,19 @@ export function createBots(scene, world, hooks) {
       bot.role=['AWPer','support','entry','lurker','IGL'][i];
       bot.plan = roundPlan.def[i % roundPlan.def.length];
     }
+    bots.forEach((bot,i)=>{
+      bot.difficulty=['rookie','veteran','elite'][i%3];
+      const a=economy.account(bot.name,bot.team);
+      bot.buyDecision=economy.equipBot(a,bot.difficulty);
+      bot.weaponKey=a.weapon;
+      bot.armor=a.armor;bot.helmet=a.helmet;bot.kit=a.kit;
+      bot.mag = WEAPONS[a.weapon].mag;
+      bot.reserve = WEAPONS[a.weapon].reserve;
+      bot.bloom = 0;
+      bot.shots = 0;
+      bot.utility=a.smoke?'smoke':a.flash?'flash':null;
+      if(bot.buyDecision==='eco')bot.plan='mid';
+    });
     // The bomb rides with the first attacker whose plan is a site push.
     const carrier = bots.find((b) => b.team === 'atk' && (b.plan === 'A' || b.plan === 'B'))
       || bots.find((b) => b.team === 'atk');
@@ -166,7 +186,7 @@ export function createBots(scene, world, hooks) {
     let bestScore = Infinity;
     const eye = eyePos(bot, _v1);
     const candidates = [];
-    if (hooks.playerAlive()) {
+    if (bot.team === 'def' && hooks.playerAlive()) {
       _v2.set(hooks.playerPos().x, hooks.playerPos().y + 1.4, hooks.playerPos().z);
       candidates.push({ kind: 'player', ref: null, pos: _v2.clone(), dist: eye.distanceTo(_v2) });
     }
@@ -229,7 +249,7 @@ export function createBots(scene, world, hooks) {
     }
 
     const bomb = hooks.bomb();
-    if(bot.utility && ((bot.team==='atk' && bot.body.position.distanceTo(new THREE.Vector3(world.sites[bot.plan==='B'?'B':'A'].x,0,world.sites[bot.plan==='B'?'B':'A'].z))<14) || (bot.team==='def'&&bomb.phase==='planted'))){hooks.utility?.(bot.utility,new THREE.Vector3(bomb.phase==='planted'?bomb.x:world.sites[bot.plan==='B'?'B':'A'].x,1,bomb.phase==='planted'?bomb.z:world.sites[bot.plan==='B'?'B':'A'].z));bot.utility=null;bot.regroupUntil=time+2;}
+    if(bot.utility && random()<DIFFICULTY[bot.difficulty].utility && ((bot.team==='atk' && bot.body.position.distanceTo(new THREE.Vector3(world.sites[bot.plan==='B'?'B':'A'].x,0,world.sites[bot.plan==='B'?'B':'A'].z))<14) || (bot.team==='def'&&bomb.phase==='planted'))){hooks.utility?.(bot.utility,new THREE.Vector3(bomb.phase==='planted'?bomb.x:world.sites[bot.plan==='B'?'B':'A'].x,1,bomb.phase==='planted'?bomb.z:world.sites[bot.plan==='B'?'B':'A'].z));economy.consume(bot.name,bot.utility);bot.utility=null;bot.regroupUntil=time+2;}
     if(bot.regroupUntil>time){bot.target=null;bot.state='hold';return;}
 
     // Dropped device: a free attacker fetches it; the last living attacker
@@ -263,6 +283,28 @@ export function createBots(scene, world, hooks) {
       if (bot.state !== 'route' || !bot.route.length) setRoute(bot, bot.plan === 'B' ? 'bSite' : 'aSite');
       return;
     }
+    // Preserve expensive equipment when a retake cannot finish. Saving is a
+    // route to spawn followed by an angle hold, not an economy label alone.
+    const escapeTime = bot.body.position.distanceTo(new THREE.Vector3(bomb.x,0,bomb.z)) / BOT_SPEED_PUSH;
+    const cannotRetake = bomb.phase === 'planted' && bomb.fuseLeft < escapeTime + (bot.kit ? 2.5 : 5) + .8;
+    if (bot.team === 'def' && cannotRetake && bot.weaponKey !== 'pistol') {
+      bot.saving = true;
+      if (bot.saveRoute !== true) {
+        setRoute(bot, 'nSpawn');
+        bot.saveRoute = true;
+      }
+      if (bot.routeIdx >= bot.route.length) bot.state = 'hold';
+      return;
+    }
+    if (bot.buyDecision === 'eco' && !bot.hasBomb && bomb.phase !== 'planted' && !bot.target) {
+      const anchor = bot.team === 'atk' ? 'sMid' : 'nMid';
+      if (!bot.ecoAnchor) {
+        setRoute(bot, anchor);
+        bot.ecoAnchor = true;
+      }
+      if (bot.routeIdx >= bot.route.length) bot.state = 'hold';
+      return;
+    }
     if (bot.team === 'def' && bomb.phase === 'planted') {
       const d = Math.hypot(bot.body.position.x - bomb.x, bot.body.position.z - bomb.z);
       if(!bot.retakeAt){bot.retakeAt=time;setRoute(bot,nearestWaypoint(world.waypoints,world.spawns.def[0].x,world.spawns.def[0].z));}
@@ -271,7 +313,7 @@ export function createBots(scene, world, hooks) {
         bot.state = 'defuse';
         return;
       }
-      if (bot.state !== 'route' && bot.state !== 'defuse') setRoute(bot, bomb.site === 'A' ? 'aSite' : 'bSite');
+      if ((bot.state !== 'route' || bot.routeIdx >= bot.route.length) && bot.state !== 'defuse') setRoute(bot, bomb.site === 'A' ? 'aSite' : 'bSite');
       return;
     }
     if (bot.hearPos && !bot.target && bot.state !== 'investigate') {
@@ -308,6 +350,10 @@ export function createBots(scene, world, hooks) {
       bot.thinkAt = THINK_EVERY + random() * 0.05;
       think(bot, time, random);
     }
+    bot.bloom = Math.max(0, bot.bloom - dt * BLOOM[bot.weaponKey].recovery);
+    if (!bot.bloom) bot.shots = 0;
+    if (bot.state !== 'defuse') bot.defuseProgress = 0;
+    if (bot.state !== 'plant') bot.plantProgress = 0;
     bot.cooldown = Math.max(0, bot.cooldown - dt);
 
     // Aiming: face the target when fighting, the route when moving.
@@ -323,7 +369,7 @@ export function createBots(scene, world, hooks) {
         if (bot.plantProgress >= 3.5) hooks.onPlantBot(bot);
       } else {
         bot.defuseProgress += dt;
-        if (bot.defuseProgress >= 5) hooks.onDefuse(bot);
+        if (bot.defuseProgress >= (bot.kit ? 2.5 : 5)) hooks.onDefuse(bot);
       }
     } else if (bot.target) {
       const t = bot.target.pos;
@@ -381,8 +427,8 @@ export function createBots(scene, world, hooks) {
     // watch a target for half a second before its first shot, and its hit
     // chance falls off hard with range and target speed — cross-map spray
     // should be noise, not a meat grinder.
-    if (bot.target && bot.targetVisible > 0.45 && bot.cooldown === 0 && bot.reloadLeft <= 0) {
-      bot.aimError = Math.max(0.008, 0.075 - bot.targetVisible * 0.02);
+    if (bot.target && bot.targetVisible > DIFFICULTY[bot.difficulty].reaction && bot.cooldown === 0 && bot.reloadLeft <= 0) {
+      bot.aimError = Math.max(0.008, 0.075 * DIFFICULTY[bot.difficulty].error - bot.targetVisible * 0.02);
       const dist = bot.target.pos.distanceTo(eyePos(bot, _v1));
       const moving = bot.target.kind === 'player' ? hooks.playerSpeed() : 2;
       const hitChance = Math.max(0.08, 0.38 - dist * 0.012 - moving * 0.03);
@@ -394,15 +440,16 @@ export function createBots(scene, world, hooks) {
       if (bot.burstGap <= 0 && bot.burstLeft > 0) {
         bot.burstLeft -= 1;
         bot.burstGap = 0.11;
-        bot.cooldown = 0.11;
+        bot.cooldown = WEAPONS[bot.weaponKey].gap;
         fire(bot, hitChance, dist);
       }
     }
     if (bot.reloadLeft > 0) {
       bot.reloadLeft -= dt;
       if (bot.reloadLeft <= 0) {
-        bot.mag = 30;
-        bot.reserve = Math.max(0, bot.reserve - 30);
+        const take = Math.min(WEAPONS[bot.weaponKey].mag - bot.mag, bot.reserve);
+        bot.mag += take;
+        bot.reserve -= take;
       }
     }
 
@@ -415,7 +462,7 @@ export function createBots(scene, world, hooks) {
 
   function fire(bot, hitChance, dist) {
     if (bot.mag <= 0) {
-      bot.reloadLeft = 1.9;
+      if (bot.reserve > 0) bot.reloadLeft = WEAPONS[bot.weaponKey].reload;
       return;
     }
     bot.mag -= 1;
@@ -426,8 +473,12 @@ export function createBots(scene, world, hooks) {
     hooks.tracer(from, to, bot.team === 'atk' ? PALETTE.amber : PALETTE.teal);
     hooks.sound('enemyShot', dist);
     const aim = to.clone().sub(from).normalize();
-    aim.x += (Math.random()-.5)*bot.aimError;
-    aim.y += (Math.random()-.5)*bot.aimError;
+    const spread = bot.aimError + bot.bloom;
+    const recoil = recoilFor(bot.weaponKey, bot.shots++);
+    aim.x += (Math.random() - .5) * spread + recoil[1];
+    aim.y += (Math.random() - .5) * spread + recoil[0] * .3;
+    const bloom = BLOOM[bot.weaponKey];
+    bot.bloom = Math.min(bloom.max, bot.bloom + bloom.shot);
     const ray = new THREE.Ray(from,aim.normalize());
     const targetBody=bot.target.kind==='player'?hooks.playerBody():bot.target.ref.body;
     const hit=intersectBody(ray,targetBody);
@@ -456,12 +507,7 @@ export function createBots(scene, world, hooks) {
 
   function damage(bot, amount, part) {
     if (!bot.alive) return false;
-    let dmg = amount;
-    if (bot.armor > 0) {
-      const absorbed = Math.min(bot.armor, dmg * 0.5);
-      bot.armor -= absorbed;
-      dmg -= absorbed;
-    }
+    const dmg = armoredDamage(bot,amount,part);
     bot.health -= dmg;
     if (bot.health <= 0) {
       bot.health = 0;

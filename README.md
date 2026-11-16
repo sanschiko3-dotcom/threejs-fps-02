@@ -7,6 +7,24 @@
 A round-based tactical shooter in the style Counter-Strike made famous, set at a
 solar power station at dusk. Built for the make.fun `threejs-fps-02` bounty.
 
+## What's new in v3
+
+- **Full buy economy** — team money tracked per player with a real freeze-time
+  buy menu (weapon tiers, armor $650, helmet $350, utility, defuse kits $400),
+  kill rewards, $3250 round wins, $1900 losses plus a $500-per-loss streak
+  bonus (capped $3400), and bots that eco, force-buy, or full-buy by team
+  money — including save rounds.
+- **Nightfall** — a second map: the same yard at night, dark sky, fog,
+  floodlights, a revised mid and a second bombsite approach. Maps rotate
+  every match.
+- **Armor, helmets & recoil** — per-weapon spread bloom and recoil patterns,
+  armor/helmet damage reduction (helmets blunt headshots), and weapon
+  availability tied to economy tiers.
+- **Retake depth** — defuse kits halve defuse time, a post-plant clutch
+  timer in the HUD, and retake utility prompts for defenders.
+- **Bot difficulty tiers** — every bot is rookie, veteran, or elite, with
+  different aim error, reaction time, economy discipline, and utility usage.
+
 ## The game
 
 Two teams of five fight over a solar yard with three lanes. The Strikers attack:

@@ -5,6 +5,7 @@
 // sightline has a corner to play around. Colliders are plain AABBs; the waypoint
 // graph is what the bots walk. All materials are shared and created once.
 import * as THREE from 'three';
+import { applyNightfall } from './map_night.js';
 import { PALETTE } from './palette.js';
 
 const SITES = {
@@ -42,7 +43,7 @@ const WAYPOINTS = {
   nSpawn: { x: 0, z: -21, links: ['nMid', 'aHold', 'bHold'] },
 };
 
-export function createWorld(scene) {
+export function createWorld(scene, variant = 'solstice') {
   const colliders = [];
   const shootables = [];
   const mats = {
@@ -204,14 +205,17 @@ export function createWorld(scene) {
     }
   }
 
-  return {
+  const world = {
     colliders,
     shootables,
     sites: SITES,
     spawns: SPAWNS,
     waypoints: WAYPOINTS,
     update,
+    name: variant,
   };
+  if (variant === 'nightfall') applyNightfall(scene, world, group);
+  return world;
 }
 
 // Breadth-first route across the waypoint graph. Returns an array of {x,z}

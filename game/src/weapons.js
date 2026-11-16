@@ -7,12 +7,12 @@ import { PALETTE } from './palette.js';
 
 export const WEAPONS = {
   pistol: {
-    name: 'P9 Sidearm', price: 0, damage: 26, headMult: 4, mag: 12, reserve: 48,
+    name: 'P9 Sidearm', price: 300, damage: 26, headMult: 4, mag: 12, reserve: 48,
     gap: 0.16, reload: 1.4, auto: false, spreadStill: 0.003, spreadMove: 0.02,
     speed: 0, range: 60,
   },
   smg: {
-    name: 'Hornet SMG', price: 1500, damage: 22, headMult: 4, mag: 28, reserve: 112,
+    name: 'Hornet SMG', price: 1200, damage: 22, headMult: 4, mag: 28, reserve: 112,
     gap: 0.075, reload: 1.7, auto: true, spreadStill: 0.005, spreadMove: 0.03,
     speed: 0, range: 55,
   },
@@ -99,6 +99,8 @@ export function createWeaponSet(camera) {
     key: 'rifle',
     mag: WEAPONS.rifle.mag,
     reserve: WEAPONS.rifle.reserve,
+    bloom: 0,
+    burst: 0,
     cooldown: 0,
     reloadLeft: 0,
     flash: 0,
@@ -111,6 +113,8 @@ export function createWeaponSet(camera) {
     if (!models[key]) models[key] = buildViewModel(key);
     currentModel = models[key];
     camera.add(currentModel);
+    state.bloom = 0;
+    state.burst = 0;
     state.key = key;
     state.mag = WEAPONS[key].mag;
     state.reserve = WEAPONS[key].reserve;
@@ -122,6 +126,8 @@ export function createWeaponSet(camera) {
 
   function step(dt) {
     const def = WEAPONS[state.key];
+    state.bloom = Math.max(0, state.bloom - dt * BLOOM[state.key].recovery);
+    if (state.bloom === 0) state.burst = 0;
     state.cooldown = Math.max(0, state.cooldown - dt);
     state.flash = Math.max(0, state.flash - dt);
     state.kick += (0 - state.kick) * Math.min(1, dt * 14);
@@ -156,6 +162,9 @@ export function createWeaponSet(camera) {
       return state.mag > 0 && state.cooldown === 0 && state.reloadLeft === 0;
     },
     pullTrigger() {
+      const profile = BLOOM[state.key];
+      state.bloom = Math.min(profile.max, state.bloom + profile.shot);
+      state.burst++;
       state.cooldown = WEAPONS[state.key].gap;
       state.flash = 0.06;
       state.kick = 0.055;
@@ -172,7 +181,7 @@ export function createWeaponSet(camera) {
     },
     spread(speed) {
       const def = WEAPONS[state.key];
-      return def.spreadStill + Math.min(1, speed / 5.4) * def.spreadMove;
+      return state.bloom + def.spreadStill + Math.min(1, speed / 5.4) * def.spreadMove;
     },
     refill() {
       const def = WEAPONS[state.key];
@@ -217,3 +226,20 @@ export const RECOIL_PATTERNS = {
  sniper: [[.038,.001]],
 };
 export function recoilFor(key,index) {const pattern=RECOIL_PATTERNS[key];return pattern[Math.min(index,pattern.length-1)];}
+
+export const BLOOM = {
+  pistol: {shot:.006,max:.025,recovery:.035},
+  smg: {shot:.0028,max:.035,recovery:.025},
+  rifle: {shot:.004,max:.045,recovery:.028},
+  sniper: {shot:.04,max:.06,recovery:.06},
+};
+
+// Armor consumes durability only on protected zones. Helmets protect heads;
+// legs remain vulnerable regardless of the vest's remaining durability.
+export function armoredDamage(target, damage, part) {
+  if (part === 'limb' || (part === 'head' && !target.helmet)) return damage;
+  const durability = Math.max(0, target.armor || 0);
+  const absorbed = Math.min(durability, damage * (part === 'head' ? .55 : .4));
+  target.armor = durability - absorbed;
+  return damage - absorbed;
+}

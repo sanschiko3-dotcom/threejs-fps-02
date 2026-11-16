@@ -1,3 +1,4 @@
+import { economy } from './economy.js';
 import { createUtility, obscured } from './utility.js';
 // Boot and the one loop: a fixed 60 Hz simulation feeding a render at the
 // display's rate. Owns the match glue — player shooting, the grenade, planting,
@@ -11,7 +12,7 @@ import { mulberry32 } from './rng.js';
 import { createWorld } from './map.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
-import { createWeaponSet, WEAPONS, GRENADE, recoilFor } from './weapons.js';
+import { createWeaponSet, WEAPONS, GRENADE, recoilFor, armoredDamage } from './weapons.js';
 import { createBots } from './bots.js';
 import { createRounds, BUY_SECONDS, ROUND_SECONDS } from './rounds.js';
 import { createEffects } from './effects.js';
@@ -37,7 +38,9 @@ scene.fog = new THREE.Fog(PALETTE.sky, 22, 70);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
-const world = createWorld(scene);
+let matchIndex = 0;
+try { matchIndex = Number(sessionStorage.getItem('solstice-match') || 0); sessionStorage.setItem('solstice-match', String(matchIndex + 1)); } catch {}
+const world = createWorld(scene, params.get('map') || (matchIndex % 2 ? 'nightfall' : 'solstice'));
 const effects = createEffects(scene);
 const audio = createAudio();
 const utility = createUtility(scene);
@@ -50,6 +53,7 @@ const raycaster = new THREE.Raycaster();
 raycaster.far = 140;
 
 const body = player.state;
+weapons.equip('pistol');
 const playerState = { health: 100, armor: 0, alive: true, hasBomb: false, money: 800 };
 let elapsed = 0;
 let frozen = false;
@@ -123,12 +127,7 @@ const hooks = {
   },
   damagePlayer(dmg, head, bot) {
     if (!playerState.alive) return;
-    let amount = dmg;
-    if (playerState.armor > 0) {
-      const absorbed = Math.min(playerState.armor, amount * 0.5);
-      playerState.armor -= absorbed;
-      amount -= absorbed;
-    }
+    const amount = armoredDamage(playerState, dmg, head ? 'head' : 'torso');
     rounds.record(bot.name,'damage',Math.min(playerState.health,amount));
     playerState.health -= amount;
     hud.damageFlash();
@@ -139,6 +138,8 @@ const hooks = {
       playerState.health = 0;
       playerState.alive = false;
       rounds.record(bot.name,'kills');
+      economy.kill(bot.name);
+      Object.assign(economy.account('You'),{alive:false,armor:0,helmet:false,kit:false,weapon:'pistol',smoke:0,flash:0});
       hud.feed(`${bot.name} killed you`, false);
       hud.banner('You are down', 'Your team fights on — next round you return.', 3000);
       input.releaseLock();
@@ -148,7 +149,7 @@ const hooks = {
     const actor=shooter==='player'?'You':shooter.name;
     rounds.record(actor,'damage',Math.min(bot.health,dmg));
     const killed = bots.damage(bot, dmg, part);
-    if(killed)rounds.record(actor,'kills');
+    if(killed){ rounds.record(actor,'kills'); if(shooter!=='player')economy.kill(actor); }
     if (killed) {
       const name = shooter === 'player' ? 'You' : shooter.name;
       hud.feed(`${name} killed ${bot.name}${part === 'head' ? ' (headshot)' : ''}`, shooter === 'player');
@@ -229,8 +230,10 @@ const hooks = {
     rounds.pickupBomb(false);
   },
   onBuy(item, price) {
-    if (item === 'smoke' || item === 'flash') { inventory[item]++; hud.setMoney(rounds.state.money); return; }
-    if (item === 'grenade') {
+    if (item === 'smoke' || item === 'flash') { inventory[item]++; hud.setMoney(rounds.state.money); hud.showBuy(true); return; }
+    if (item === 'helmet' || item === 'kit') {
+      playerState[item] = true;
+    } else if (item === 'grenade') {
       weapons.state.grenades += 1;
     } else if (item === 'armor') {
       playerState.armor = 100;
@@ -254,6 +257,16 @@ hooks.footstep=(b)=>{audio.positional('step',b.body.position,body);bots.hearShot
 const rounds = createRounds(hooks);
 
 function resetPositions(plan) {
+  if (!playerState.alive) {
+    weapons.equip('pistol');
+    playerState.armor = 0;
+    playerState.helmet = false;
+    playerState.kit = false;
+    inventory.smoke = inventory.flash = 0;
+    weapons.state.grenades = 0;
+  }
+  const account = economy.account('You');
+  Object.assign(account, {armor:playerState.armor, helmet:!!playerState.helmet, weapon:weapons.state.key, smoke:inventory.smoke, flash:inventory.flash});
   player.reset(world.spawns.atk[0]);
   playerState.health = 100;
   playerState.alive = true;
@@ -311,7 +324,7 @@ function shoot(spread) {
   }
   weapons.pullTrigger();
   audio.shot(weapons.state.key);
-  const shotIndex = weapons.def().mag - weapons.state.mag;
+  const shotIndex = weapons.state.burst;
   player.recoil(...recoilFor(weapons.state.key,shotIndex-1));
   bots.hearShot(body.position, 'atk');
   hud.setAmmo(weapons.state.mag, weapons.state.reserve, weapons.state.grenades);
@@ -424,8 +437,9 @@ function stepBombPickup() {
 
 function step(dt) {
  utility.step(dt); blind=Math.max(0,blind-dt); hud.tactical(body,bots.bots,rounds.state.bomb,blind);
+ hud.retake(rounds.state.bomb, bots.bots.filter(b => b.alive && b.team === 'def'), aliveCounts().atk);
  audio.deafen(blind);
- for(const [key,kind] of [['KeyX','smoke'],['KeyZ','flash']]) if(input.state.keys.has(key)&&inventory[kind]>0&&rounds.state.phase==='live'){ inventory[kind]--; camera.getWorldDirection(direction); const at=body.position.clone().addScaledVector(direction,9); utility.throw(kind,at,utilityActors()); input.state.keys.delete(key); }
+ for(const [key,kind] of [['KeyX','smoke'],['KeyZ','flash']]) if(input.state.keys.has(key)&&inventory[kind]>0&&rounds.state.phase==='live'){ inventory[kind]--; economy.consume('You',kind); camera.getWorldDirection(direction); const at=body.position.clone().addScaledVector(direction,9); utility.throw(kind,at,utilityActors()); input.state.keys.delete(key); }
 
   elapsed += dt;
   const keys = input.state.keys;
